@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Плавная Змейка</title>
+    <!-- Telegram Web App SDK: MUST be included for Telegram integration -->
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Custom styles for retro design */
+        body {
+            font-family: 'Inter', sans-serif;
+            background-color: #1a1a2e; /* Dark theme */
+            color: #e0e0e0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            margin: 0;
+            padding: 10px;
+            user-select: none; /* Disable selection on touch devices */
+        }
+        .game-container {
+            width: 100%;
+            max-width: 400px; /* Max size */
+            background-color: #2c0739;
+            border: 4px solid #6c5ce7;
+            border-radius: 12px;
+            box-shadow: 0 0 25px rgba(108, 92, 231, 0.5);
+            padding: 10px;
+        }
+        canvas {
+            display: block;
+            background-color: #0d001f;
+            border-radius: 8px;
+            border: 1px solid #4a4a6b;
+        }
+        .score-board {
+            color: #ffbe76;
+            text-align: center;
+            font-size: 1.5rem;
+            margin-bottom: 10px;
+            font-weight: bold;
+        }
+        .control-buttons {
+            display: grid;
+            grid-template-areas:
+                ". up ."
+                "left . right"
+                ". down .";
+            gap: 5px;
+            margin-top: 15px;
+            padding: 10px;
+        }
+        .control-buttons button {
+            background-color: #6c5ce7;
+            color: white;
+            padding: 15px;
+            font-size: 1.25rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 8px;
+            box-shadow: 0 4px #4a3e9c;
+            transition: all 0.1s ease-in-out;
+            touch-action: manipulation; /* Improves touch responsiveness */
+        }
+        .control-buttons button:active {
+            box-shadow: 0 1px #4a3e9c;
+            transform: translateY(3px);
+            background-color: #8c82f9;
+        }
+        .control-up { grid-area: up; }
+        .control-left { grid-area: left; }
+        .control-right { grid-area: right; }
+        .control-down { grid-area: down; }
+        .start-reset-btn {
+            background-color: #e15f41;
+            box-shadow: 0 4px #a03c27;
+            padding: 12px 20px;
+            margin-top: 15px;
+        }
+        .start-reset-btn:active {
+            box-shadow: 0 1px #a03c27;
+            transform: translateY(3px);
+            background-color: #f17b60;
+        }
+        .game-message {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.8);
+            color: white;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            text-align: center;
+            border-radius: 8px;
+            font-size: 1.5rem;
+            font-weight: bold;
+            z-index: 10;
+        }
+        .telegram-close-btn {
+            background-color: #5c6bc0;
+            box-shadow: 0 4px #3f4b82;
+            margin-top: 10px;
+        }
+        .telegram-close-btn:active {
+            box-shadow: 0 1px #3f4b82;
+            transform: translateY(3px);
+            background-color: #7986cb;
+        }
+    </style>
+</head>
+<body>
+
+<div class="game-container">
+    <div class="score-board">Счет: <span id="score">0</span></div>
+    
+    <div class="relative">
+        <canvas id="snakeCanvas"></canvas>
+        <div id="gameMessage" class="game-message hidden">
+            <p id="messageText">Нажмите СТАРТ!</p>
+            <!-- Start button is the same as the Restart button for simple logic -->
+            <button id="mainActionBtn" class="start-reset-btn text-lg rounded-xl font-bold mt-4" onclick="startGame()">СТАРТ</button>
+        </div>
+    </div>
+
+    <div id="controls" class="control-buttons grid-cols-3">
+        <!-- Touch and Mouse event handlers for controls -->
+        <button class="control-up" ontouchstart="setDirection(0, -1)" onmousedown="setDirection(0, -1)">▲</button>
+        <button class="control-left" ontouchstart="setDirection(-1, 0)" onmousedown="setDirection(-1, 0)">◀</button>
+        <button class="control-right" ontouchstart="setDirection(1, 0)" onmousedown="setDirection(1, 0)">▶</button>
+        <button class="control-down" ontouchstart="setDirection(0, 1)" onmousedown="setDirection(0, 1)">▼</button>
+    </div>
+</div>
+
+<script>
+    // --- Telegram Web App Setup (Client-Side) ---
+    // Check if the WebApp object exists (only available when opened inside Telegram)
+    const isTelegramWebApp = typeof Telegram !== 'undefined' && Telegram.WebApp;
+    
+    // If running inside Telegram, notify the app is ready and potentially customize UI
+    if (isTelegramWebApp) {
+        Telegram.WebApp.ready();
+        // Hide the "controls" container if Telegram's native controls were used, but we rely on in-app buttons
+        // Telegram.WebApp.expand(); // Optional: expand the viewport
+    }
+
+    // Function to close the Web App window
+    function closeWebApp() {
+        if (isTelegramWebApp) {
+            // NOTE: The actual score submission (setGameScore) must be done by your bot's server 
+            // after getting the game data from Telegram when the user interacts with the game message.
+            // For a simple close, we use Telegram.WebApp.close().
+            Telegram.WebApp.close(); 
+        } else {
+            console.log("Not running in Telegram Web App environment.");
+            // For browser testing, just hide the message
+            document.getElementById('gameMessage').classList.add('hidden');
+        }
+    }
+
+
+    // --- Game Configuration ---
+    const canvas = document.getElementById('snakeCanvas');
+    const ctx = canvas.getContext('2d');
+    const scoreDisplay = document.getElementById('score');
+    const gameMessage = document.getElementById('gameMessage');
+    const messageText = document.getElementById('messageText');
+    const mainActionBtn = document.getElementById('mainActionBtn');
+    
+    // Grid and Canvas size
+    const gridSize = 20; 
+    const CANVAS_SIZE = 380; 
+    canvas.width = CANVAS_SIZE;
+    canvas.height = CANVAS_SIZE;
+    const CELL_SIZE = CANVAS_SIZE / gridSize; 
+    
+    // Speed control using requestAnimationFrame
+    const GAME_SPEED = 120; // Time in ms between snake moves (~8 moves/sec)
+    let lastTime = 0;
+    let accumulatedTime = 0;
+    let animationFrameId; 
+    
+    // --- Game State Variables ---
+    let snake;
+    let food;
+    let dx; 
+    let dy; 
+    let score;
+    let isPaused = true;
+    let lastDx; 
+    let lastDy;
+
+    // Colors
+    const SNAKE_COLOR = '#00ff7f'; 
+    const FOOD_COLOR = '#ff4757';  
+    const GRID_COLOR = '#1f0d36';  
+    
+    // --- Game Functions ---
+
+    function initGame() {
+        snake = [
+            { x: 10, y: 10 },
+            { x: 9, y: 10 },
+            { x: 8, y: 10 }
+        ];
+        
+        dx = 1; 
+        dy = 0;
+        lastDx = 1;
+        lastDy = 0;
+        score = 0;
+        scoreDisplay.textContent = score;
+        isPaused = true;
+        
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+
+        lastTime = 0;
+        
+        placeFood();
+        drawGame();
+        
+        gameMessage.classList.remove('hidden');
+        messageText.textContent = "Нажмите СТАРТ!";
+        mainActionBtn.textContent = "СТАРТ";
+        mainActionBtn.className = "start-reset-btn text-lg rounded-xl font-bold mt-4";
+        mainActionBtn.onclick = startGame;
+    }
+
+    function startGame() {
+        isPaused = false;
+        gameMessage.classList.add('hidden');
+        
+        lastTime = 0; 
+        accumulatedTime = 0;
+        
+        animationFrameId = requestAnimationFrame(gameLoop); 
+    }
+
+    function gameLoop(currentTime) {
+        if (isPaused) {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+            }
+            return;
+        }
+
+        if (lastTime === 0) {
+            lastTime = currentTime;
+        }
+
+        const deltaTime = currentTime - lastTime;
+        lastTime = currentTime;
+        
+        accumulatedTime += deltaTime;
+        
+        if (accumulatedTime >= GAME_SPEED) {
+            updateGameLogic();
+            accumulatedTime -= GAME_SPEED; 
+        }
+        
+        drawGame();
+
+        animationFrameId = requestAnimationFrame(gameLoop);
+    }
+
+    // UPDATED FUNCTION for Telegram Web App integration
+    function gameOver() {
+        isPaused = true;
+        if (animationFrameId) {
+            cancelAnimationFrame(animationFrameId);
+        }
+        gameMessage.classList.remove('hidden');
+        messageText.innerHTML = `ИГРА ОКОНЧЕНА!<br>Ваш счет: ${score}`;
+        
+        if (isTelegramWebApp) {
+            // If running in Telegram, show a 'Close' button
+            mainActionBtn.textContent = "Готово / Закрыть";
+            mainActionBtn.className = "telegram-close-btn text-lg rounded-xl font-bold mt-4";
+            mainActionBtn.onclick = closeWebApp;
+            
+            // Optional: Show a Restart button alongside the Close button
+            const restartAfterGameOver = document.createElement('button');
+            restartAfterGameOver.textContent = "Начать заново";
+            restartAfterGameOver.className = "start-reset-btn text-lg rounded-xl font-bold mt-4 ml-4";
+            restartAfterGameOver.onclick = initGame;
+            
+            // Clear existing buttons and add new ones (if any)
+            gameMessage.innerHTML = '';
+            gameMessage.appendChild(messageText);
+            gameMessage.appendChild(mainActionBtn);
+            gameMessage.appendChild(restartAfterGameOver);
+            
+        } else {
+            // If not in Telegram, show only 'Restart' button
+            mainActionBtn.textContent = "Начать заново";
+            mainActionBtn.className = "start-reset-btn text-lg rounded-xl font-bold mt-4";
+            mainActionBtn.onclick = initGame;
+        }
+    }
+
+    function placeFood() {
+        let newFood;
+        do {
+            newFood = {
+                x: Math.floor(Math.random() * gridSize),
+                y: Math.floor(Math.random() * gridSize)
+            };
+        } while (isSnake(newFood));
+        
+        food = newFood;
+    }
+
+    function isSnake(coord) {
+        return snake.some(segment => segment.x === coord.x && segment.y === coord.y);
+    }
+    
+    function updateGameLogic() {
+        lastDx = dx;
+        lastDy = dy;
+        
+        const head = { x: snake[0].x + dx, y: snake[0].y + dy };
+
+        // 1. Check for collisions
+        if (
+            head.x < 0 || head.x >= gridSize || 
+            head.y < 0 || head.y >= gridSize || 
+            isSnake(head)                      
+        ) {
+            gameOver();
+            return;
+        }
+
+        // Add new head
+        snake.unshift(head);
+
+        // 2. Check if food is eaten
+        if (head.x === food.x && head.y === food.y) {
+            score++;
+            scoreDisplay.textContent = score;
+            placeFood();
+        } else {
+            // Remove tail if food was not eaten
+            snake.pop();
+        }
+    }
+    
+    function drawGame() {
+        // Clear canvas (background)
+        ctx.fillStyle = GRID_COLOR; 
+        ctx.fillRect(0, 0, CANVAS_SIZE, CANVAS_SIZE);
+        
+        // Draw food
+        const margin = 1; 
+        ctx.fillStyle = FOOD_COLOR;
+        ctx.fillRect(
+            food.x * CELL_SIZE + margin, 
+            food.y * CELL_SIZE + margin, 
+            CELL_SIZE - 2 * margin, 
+            CELL_SIZE - 2 * margin
+        );
+
+        // Draw snake
+        snake.forEach((segment, index) => {
+            ctx.fillStyle = index === 0 ? SNAKE_COLOR : '#00a352'; // Head is brighter
+            // Draw with margin for visual separation
+            ctx.fillRect(
+                segment.x * CELL_SIZE + margin, 
+                segment.y * CELL_SIZE + margin, 
+                CELL_SIZE - 2 * margin, 
+                CELL_SIZE - 2 * margin
+            );
+        });
+    }
+    
+    // --- Input Handlers ---
+
+    // Keyboard input (for desktop testing)
+    document.addEventListener('keydown', (e) => {
+        if (isPaused && e.key === ' ') { 
+            startGame();
+            return;
+        }
+        
+        const key = e.key;
+        let newDx = dx;
+        let newDy = dy;
+
+        if (key === 'ArrowUp' || key === 'w') {
+            newDx = 0; newDy = -1;
+        } else if (key === 'ArrowDown' || key === 's') {
+            newDx = 0; newDy = 1;
+        } else if (key === 'ArrowLeft' || key === 'a') {
+            newDx = -1; newDy = 0;
+        } else if (key === 'ArrowRight' || key === 'd') {
+            newDx = 1; newDy = 0;
+        }
+        
+        // Prevent 180 degree turn
+        if (newDx !== -lastDx || newDy !== -lastDy) {
+            dx = newDx;
+            dy = newDy;
+        }
+        
+        // Prevent page scrolling
+        if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(key)) {
+            e.preventDefault();
+        }
+    });
+
+    // Touch/Button input
+    function setDirection(newDx, newDy) {
+        if (isPaused) return;
+
+        // Prevent 180 degree turn
+        if (newDx !== -lastDx || newDy !== -lastDy) {
+            dx = newDx;
+            dy = newDy;
+        }
+    }
+
+    window.setDirection = setDirection; 
+
+    // Initialization on load
+    window.onload = initGame;
+    
+</script>
+</body>
+</html>
+
+
